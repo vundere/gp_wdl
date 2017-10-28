@@ -1,10 +1,7 @@
 from urllib import parse
 from bs4 import BeautifulSoup
 from time import sleep
-from multiprocessing import Manager
-from zombie_pool import Pool
-from contextlib import closing
-from functools import partial
+from multiprocessing import Pool, Manager
 from pathlib import Path
 from sys import setrecursionlimit, getrecursionlimit
 import threading
@@ -57,10 +54,13 @@ class ComicSpider(object):
             self.__queue.append(url)
 
     def _add_size(self, size):
-        count = self.__avg_stored['count']
-        avg = self.__avg_stored['avg']
-
-        self.__avg_stored = {'count': count+1, 'avg': (avg+size)/count+1}
+        size = int(size)
+        count = int(self.__avg_stored['count'])
+        avg = int(self.__avg_stored['avg'])
+        try:
+            self.__avg_stored = {'count': count + 1, 'avg': (avg+size) / count + 1}
+        except ZeroDivisionError:
+            self.__avg_stored = {'count': 1, 'avg': size}
 
     def _parse(self, link):
         if link.startswith('/') or not link.startswith('http'):
@@ -87,13 +87,14 @@ class ComicSpider(object):
         for link in soup.find_all('a', href=True):
             self._add_to_queue(self._parse(link['href']))
 
-        for img in soup.find_all('img'):
-            self._process_img(img)
+        # for img in soup.find_all('img'):
+        #     self._process_img(img)
 
-        # with closing(Pool(processes=1)) as sp:
-        #     apply = [sp.apply_async(partial(self._process_img, img=img)) for img in soup.find_all('img')]
-        #     for s_worker in apply:
-        #         s_worker.get()
+        with Pool() as sp:
+            print('Pool initiated.')
+            apply = [sp.apply_async(self._process_img, (img,)) for img in soup.find_all('img')]
+            for s_worker in apply:
+                s_worker.get()
 
     def _process_img(self, img):
         target = None
@@ -146,7 +147,7 @@ class ComicSpider(object):
             target_conn.close()
 
     def _work(self, task):
-        setrecursionlimit(2**10)
+        setrecursionlimit(2**14)
         logger.info('Worker starting, recursion limit: {}'.format(getrecursionlimit()), extra={'pid': os.getpid()})
         self.__curdomain = task[1]
         self.__queue.append(task[0])
@@ -163,9 +164,6 @@ class ComicSpider(object):
         logger.info('Queue empty #########################', extra={'pid': os.getpid()})
 
     def run(self):
-        with closing(Pool(processes=len(self.__domains))) as p:
+        apply = [threading.Thread(target=self._work, kwargs={'task': d}).start() for d in self.__domains]
 
-            apply = [p.apply_async(partial(self._work, task=d)) for d in self.__domains]
-
-            for worker in apply:
-                worker.get()
+        print(apply)
