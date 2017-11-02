@@ -2,3 +2,8 @@
 *.txt
 *pycache*
 .log
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.html
