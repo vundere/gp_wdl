@@ -1,9 +1,10 @@
 from urllib import parse
 from bs4 import BeautifulSoup
 from time import sleep
-from multiprocessing import Pool, Manager
+from multiprocessing import Pool
 from pathlib import Path
 from sys import setrecursionlimit, getrecursionlimit
+from requests.exceptions import ConnectionError
 import threading
 import requests
 import os
@@ -19,6 +20,16 @@ def get_file_name_from_request(req):
     except AttributeError as e:
         logger.info(e,  extra={'pid': os.getpid()})
         return None
+
+
+def content_length(req):
+    try:
+        res = req.headers['content-length']
+        # logger.info('Content length from header: {}'.format(res),  extra={'pid': os.getpid()})
+    except KeyError:
+        res = len(req.content)
+        # logger.info('Content length from content: {}'.format(res),  extra={'pid': os.getpid()})
+    return res
 
 
 def create_logger():
@@ -39,15 +50,13 @@ logger = create_logger()
 
 class ComicSpider(object):
     def __init__(self, domains):
-        manager = Manager()
         self.__domains = domains
         self.__curdomain = None
         self.__cururl = None
         self.__queue = []
         self.__visited = []
-        self.__trash = manager.dict()
+        self.__trash = {}
         self.__avg_stored = {'count': 0, 'avg': 0}
-        self.__scrub = False
 
     def _add_to_queue(self, url):
         if (url not in self.__visited) and (url not in self.__queue) and (self.__curdomain in url):
@@ -63,40 +72,50 @@ class ComicSpider(object):
             self.__avg_stored = {'count': 1, 'avg': size}
 
     def _parse(self, link):
-        if link.startswith('/') or not link.startswith('http'):
+        if '#' in link:
+            return None
+        elif link.startswith('/') or not link.startswith('http'):
             return parse.urljoin(self.__cururl, link)
         elif link.startswith('http'):
             return link
         else:
             return None
 
-    def _trash(self, url, size):
+    def _trash(self, url, size, filename):
         if url not in self.__trash:
-            self.__trash[url] = size
+            self.__trash[url] = {'size': size, 'filename': filename}
         with open('dumpster.txt', 'a') as d:
             d.write('{}, {}\n'.format(url, size))
+
+    def _clean(self):
+        for item in self.__trash.values():
+            if item['size'] < (self.__avg_stored['size']/3):
+                filename = item['filename']
+                try:
+                    os.remove('{}/{}/{}'.format('comics', self.__curdomain.split('.')[0], filename))
+                    logger.info('Removed {}'.format(filename), extra={'pid': os.getpid()})
+                except Exception as e:
+                    logger.info(e)
 
     def _collect(self, url):
         self.__cururl = url
         self.__visited.append(url)
         logger.info('Visiting {}'.format(url), extra={'pid': os.getpid()})
 
-        r = requests.get(url)
+        try:
+            r = requests.get(url)
+        except ConnectionError:
+            return
         soup = BeautifulSoup(r.content, 'lxml')
 
         for link in soup.find_all('a', href=True):
             self._add_to_queue(self._parse(link['href']))
 
-        # for img in soup.find_all('img'):
-        #     self._process_img(img)
-
-        with Pool() as sp:
-            print('Pool initiated.')
-            apply = [sp.apply_async(self._process_img, (img,)) for img in soup.find_all('img')]
-            for s_worker in apply:
-                s_worker.get()
+        for img in soup.find_all('img'):
+            threading.Thread(target=self._process_img, kwargs={'img': img}).start()
 
     def _process_img(self, img):
+        # TODO refactor into something more concise
         target = None
         if img['src'] is None:
             return
@@ -111,13 +130,8 @@ class ComicSpider(object):
         img_fetch = requests.get(url, stream=True)
 
         filename = get_file_name_from_request(img_fetch)
-        if filename in os.listdir(self.__curdomain.split('.')[0]):
-            try:
-                os.remove('{}/{}'.format(self.__curdomain.split('.')[0], filename))
-                logger.info('Removed {}'.format(filename), extra={'pid': os.getpid()})
-                self._trash(url, img_fetch.headers['content-length'])
-            except Exception as e:
-                logger.info(e)
+        if filename in os.listdir('comics/'+self.__curdomain.split('.')[0]):
+            self._trash(url, content_length(img_fetch), filename)
             return
 
         if img_fetch.status_code != 200:
@@ -126,16 +140,17 @@ class ComicSpider(object):
         if not target:
             target = img_fetch
 
-        if int(target.headers['content-length']) < int(img_fetch.headers['content-length']):
+        if int(content_length(target)) < int(content_length(img_fetch)):
             target.close()
             target = img_fetch
 
-        self._add_size(target.headers['content-length'])
+        self._add_size(content_length(target))
         self._save_img(target)
 
     def _save_img(self, target_conn):
+        # TODO locks
         if target_conn:
-            fname = '{}/{}'.format(self.__curdomain.split('.')[0], get_file_name_from_request(target_conn))
+            fname = '{}/{}/{}'.format('comics', self.__curdomain.split('.')[0], get_file_name_from_request(target_conn))
             if not Path(fname).is_file():
                 with open(fname, 'wb') as f:
                     for chunk in target_conn.iter_content():
@@ -147,13 +162,13 @@ class ComicSpider(object):
             target_conn.close()
 
     def _work(self, task):
-        setrecursionlimit(2**14)
+        setrecursionlimit(2**12)
         logger.info('Worker starting, recursion limit: {}'.format(getrecursionlimit()), extra={'pid': os.getpid()})
         self.__curdomain = task[1]
         self.__queue.append(task[0])
 
         try:
-            os.makedirs(self.__curdomain.split('.')[0])
+            os.makedirs('comics/'+self.__curdomain.split('.')[0])
         except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
@@ -161,9 +176,12 @@ class ComicSpider(object):
         while len(self.__queue) > 0:
             self._collect(self.__queue.pop(0))
             sleep(3)
-        logger.info('Queue empty #########################', extra={'pid': os.getpid()})
+        self._clean()
+        logger.info('Worker finished #########################', extra={'pid': os.getpid()})
 
     def run(self):
-        apply = [threading.Thread(target=self._work, kwargs={'task': d}).start() for d in self.__domains]
+        with Pool() as p:
+            apply = [p.apply_async(self._work, (d,)) for d in self.__domains]
+            res = [w.get() for w in apply]
 
         print(apply)
