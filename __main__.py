@@ -12,13 +12,9 @@ def load_source():
 
 def main():
     domains = load_source()
-    print('First line of domains is {}'.format(domains[0]))
-    dec = input('Do you want to proceed?\n\t')
-    if dec.lower() == 'y':
-        cs = ComicSpider(domains)
-        cs.run()
-    else:
-        return
+    print('Domains loaded, starting spider...')
+    cs = ComicSpider(domains)
+    cs.run()
 
 
 if __name__ == '__main__':
