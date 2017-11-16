@@ -2,6 +2,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 BM_FILE = "bookmark_source.html"
+SOURCE_FILE = 'source.txt'
 
 
 def find():
@@ -17,11 +18,19 @@ def find():
 
 
 def output(indata):
-    with open('source.txt', 'w') as src:
+    with open(SOURCE_FILE, 'w') as src:
         for dat in indata:
             src.write('{},{}\n'.format(dat[0], dat[1]))
 
 
-if __name__ == '__main__':
-    bookmark_links = find()
-    output(bookmark_links)
+def dedupe(sourcefile):
+    with open(sourcefile, 'r+') as src:
+        lines = src.readlines()
+        newlines = []
+        src.seek(0)
+        src.truncate()
+        for line in lines:
+            if line not in newlines:
+                newlines.append(line)
+        for line in newlines:
+            src.write(line)

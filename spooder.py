@@ -130,18 +130,27 @@ class ComicSpider(object):
     def _trash(self, url, size, filename):
         if url not in self.__trash:
             self.__trash[url] = {'size': size, 'filename': filename}
-        with open('dumpster.txt', 'a') as d:
-            d.write('{}, {}\n'.format(url, size))
+
+            with open('dumpster.txt', 'a') as d:
+                d.write('{}, {}\n'.format(url, size))
 
     def _clean(self):
         for item in self.__trash.values():
+            os.makedirs('{}/{}'.format(self._comic_dir, 'trash'))
             if item['size'] < (self.__avg_stored['size']/3):
                 filename = item['filename']
                 try:
-                    os.remove('{}/{}/{}'.format('comics', self.__curdomain.split('.')[0], filename))
-                    logger.info('Removed {}'.format(filename), extra={'pid': os.getpid()})
+                    # Moves files instead of deleting them, to allow for manual inspection and deletion.
+                    # os.remove('{}/{}/{}'.format('comics', self.__curdomain.split('.')[0], filename))
+                    # logger.info('Removed {}'.format(filename), extra={'pid': os.getpid()})
+                    os.rename(
+                        '{}/{}'.format(self._comic_dir, filename),
+                        '{}/{}/{}'.format(self._comic_dir, 'trash', filename)
+                    )
                 except Exception as e:
                     logger.info(e)
+        if len(os.listdir(self._comic_dir)) == 0:
+            os.remove(self._comic_dir)
 
     def _collect(self, url):
         self.__cururl = url
@@ -246,10 +255,14 @@ class ComicSpider(object):
 
         self._clean()
 
+        if len(os.listdir(self._comic_dir)) < len(self.__visited)/10:
+            # An easy way of knowing which comics might have uncaught issues
+            with open('concerns.txt', 'a') as f:
+                f.write('Low download amount for comic {}'.format(self._comic_name))
+
         logger.info('Worker finished #########################', extra={'pid': os.getpid()})
 
     def run(self):
-        logger.debug('Spider starting...', extra={'pid': os.getpid()})
         targets = [self.__domains[x:x+4] for x in range(0, len(self.__domains), 4)]
         # targets = [[self.__domains[0]]]  # Uncomment for single-site testing
         with Pool() as p:
