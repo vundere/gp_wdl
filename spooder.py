@@ -34,6 +34,24 @@ def content_length(req):
     return res
 
 
+def split(data, n):
+    chunk_size = int(len(data)/n)
+    output = [data[x:x+chunk_size] for x in range(0, len(data), chunk_size)]
+    outlen = len(output)
+    lastind = outlen - 1
+    if outlen > n:
+        while outlen > n:
+            for subset in output[0:n-1]:
+                outlen = len(output)
+                try:
+                    val = output[lastind].pop()
+                    subset.append(val)
+                except IndexError:
+                    if outlen > n:
+                        output.pop()
+    return output
+
+
 def create_logger():
     lg = logging.getLogger(__name__)
     lg.setLevel(logging.DEBUG)
@@ -49,7 +67,7 @@ def create_logger():
     return lg
 
 
-logger = create_logger()
+logger = create_logger()  # Created here for easier handling TODO less clumsy logging
 
 
 class ComicSpider(object):
@@ -203,38 +221,42 @@ class ComicSpider(object):
                 logger.info('{} already exists.'.format(fname), extra={'pid': os.getpid()})
             target_conn.close()
 
-    def _work(self, task):
+    def _work(self, tasks):
         setrecursionlimit(2**12)
-        self.__curdomain = task[1]
-        self.__queue.append(task[0])
+        for task in tasks:
+            self.__avg_stored = {'count': 0, 'avg': 0}  # Reset to account for file size difference between comics
+            self.__curdomain = task[1]
+            self.__queue.append(task[0])
 
-        try:
-            os.makedirs(self._comic_dir)
-            os.makedirs('logs')
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
+            try:
+                os.makedirs(self._comic_dir)
+                os.makedirs('logs')
+            except OSError as e:
+                if e.errno != errno.EEXIST:
+                    raise
 
-        logger.addHandler(logging.FileHandler(filename='logs/{}.log'.format(self._comic_name), encoding='utf-8'))
-        logger.info('Worker starting, recursion limit: {}'.format(getrecursionlimit()), extra={'pid': os.getpid()})
+            logger.addHandler(logging.FileHandler(filename='logs/{}.log'.format(self._comic_name), encoding='utf-8'))
+            logger.info('Worker starting, recursion limit: {}'.format(getrecursionlimit()), extra={'pid': os.getpid()})
 
-        while len(self.__queue) > 0:
-            self._collect(self.__queue.pop(0))
-            sleep(1.5)
+            while len(self.__queue) > 0:
+                self._collect(self.__queue.pop(0))
+                sleep(1.5)
 
-        self._clean()
+            self._clean()
 
-        if len(os.listdir(self._comic_dir)) < len(self.__visited)/10:
-            # An easy way of knowing which comics might have uncaught issues
-            with open('concerns.txt', 'a') as f:
-                f.write('Low download amount for comic {}'.format(self._comic_name))
+            if len(os.listdir(self._comic_dir)) < len(self.__visited)/10:
+                # An easy way of knowing which comics might have uncaught issues
+                with open('concerns.txt', 'a') as f:
+                    f.write('Low download amount for comic {}'.format(self._comic_name))
 
+            logger.info('Task finished #########################', extra={'pid': os.getpid()})
         logger.info('Worker finished #########################', extra={'pid': os.getpid()})
 
     def run(self):
-        targets = [self.__domains[x:x+4] for x in range(0, len(self.__domains), 4)]
+        # targets = [self.__domains[x:x+4] for x in range(0, len(self.__domains), 4)]
+        targets = split(self.__domains, 4)
         # targets = [[self.__domains[0]]]  # Uncomment for single-site testing
-        with Pool() as p:
+        with Pool(processes=4) as p:
             for subset in targets:
                 apply = [p.apply_async(self._work, (d,)) for d in subset]
                 res = [w.get() for w in apply]
