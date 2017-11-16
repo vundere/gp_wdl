@@ -59,16 +59,16 @@ def create_logger():
     lg = logging.getLogger(__name__)
     lg.setLevel(logging.DEBUG)
 
-    fhandler = logging.FileHandler(filename='gp_wdl.log', encoding='utf-8', mode='a')
+    # fhandler = logging.FileHandler(filename='gp_wdl.log', encoding='utf-8', mode='a')
     shandler = logging.StreamHandler()
-    fhandler.setLevel(logging.DEBUG)
+    # fhandler.setLevel(logging.DEBUG)
     shandler.setLevel(logging.INFO)
 
     fmt = logging.Formatter('[%(asctime)s]:%(pid)s: %(message)s', datefmt='%H:%M:%S')
-    fhandler.setFormatter(fmt)
+    # fhandler.setFormatter(fmt)
     shandler.setFormatter(fmt)
 
-    lg.addHandler(fhandler)
+    # lg.addHandler(fhandler)
     lg.addHandler(shandler)
 
     return lg
@@ -95,6 +95,10 @@ class ComicSpider(object):
     def _comic_dir(self):
         return '/'.join(['comics', self.__curdomain.split('.')[0]])
 
+    @property
+    def _comic_name(self):
+        return self.__curdomain.split('.')[0]
+
     def _add_to_queue(self, url):
         if not url:
             return
@@ -112,8 +116,6 @@ class ComicSpider(object):
             self.__avg_stored = {'count': 1, 'avg': size}
 
     def _parse(self, link):
-        logger.debug('Parsing {}'.format(link), extra={'pid': os.getpid()})
-
         result = None
 
         if '#' in link:
@@ -123,7 +125,6 @@ class ComicSpider(object):
         elif link.startswith('http'):
             result = link
 
-        logger.debug('Parsed result: {}'.format(result), extra={'pid': os.getpid()})
         return result
 
     def _trash(self, url, size, filename):
@@ -149,6 +150,8 @@ class ComicSpider(object):
 
         try:
             r = requests.get(url)
+            if r.status_code != 200:
+                raise ConnectionError
         except ConnectionError:
             logger.debug('Could not connect to {}, stopping.'.format(url), extra={'pid': os.getpid()})
             return
@@ -159,7 +162,7 @@ class ComicSpider(object):
             try:
                 refresh_url = meta['content'].split('=')[1]
                 if refresh_url:
-                    self.__curdomain = parse.urlparse(refresh_url).netloc
+                    self.__curdomain = parse.urlparse(refresh_url).netloc.replace('www.', '')
                     return self._collect(refresh_url)
             except KeyError:
                 pass
@@ -202,15 +205,18 @@ class ComicSpider(object):
             target = img_fetch
 
         self._add_size(content_length(target))
-        self._save_img(target)
+        try:
+            self._save_img(target)
+            logger.debug('{} saved!'.format(img_src), extra={'pid': os.getpid()})
+        except PermissionError:
+            logger.debug('ERROR!\n\tPermissionError saving {}'.format(img_src), extra={'pid': os.getpid()})
 
     def _save_img(self, target_conn):
         if target_conn:
             fname = '{}/{}'.format(self._comic_dir, get_file_name_from_request(target_conn))
             if not Path(fname).is_file():
                 with open(fname, 'wb') as f:
-                    for chunk in target_conn.iter_content():
-                        f.write(chunk)
+                    f.write(target_conn.content)
 
                 logger.info('{} saved!'.format(fname), extra={'pid': os.getpid()})
             else:
@@ -220,16 +226,19 @@ class ComicSpider(object):
     def _work(self, task):
         setrecursionlimit(2**12)
 
-        logger.info('Worker starting, recursion limit: {}'.format(getrecursionlimit()), extra={'pid': os.getpid()})
-
         self.__curdomain = task[1]
         self.__queue.append(task[0])
 
         try:
             os.makedirs(self._comic_dir)
+            os.makedirs('logs')
         except OSError as e:
             if e.errno != errno.EEXIST:
                 raise
+
+        logger.addHandler(logging.FileHandler(filename='logs/{}.log'.format(self._comic_name), encoding='utf-8'))
+
+        logger.info('Worker starting, recursion limit: {}'.format(getrecursionlimit()), extra={'pid': os.getpid()})
 
         while len(self.__queue) > 0:
             self._collect(self.__queue.pop(0))
@@ -242,7 +251,8 @@ class ComicSpider(object):
     def run(self):
         logger.debug('Spider starting...', extra={'pid': os.getpid()})
         targets = [self.__domains[x:x+4] for x in range(0, len(self.__domains), 4)]
+        # targets = [[self.__domains[0]]]  # Uncomment for single-site testing
         with Pool() as p:
             for subset in targets:
                 apply = [p.apply_async(self._work, (d,)) for d in subset]
-                res = [w.get(timeout=15) for w in apply]
+                res = [w.get() for w in apply]
