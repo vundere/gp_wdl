@@ -34,43 +34,18 @@ def content_length(req):
     return res
 
 
-def domain_safeguard(check_url, domain_url):
-    # TODO test this for edge cases before using, may be too broad of a check
-    common = ['com', 'org', 'net']
-    check_components = check_url.split('.')
-    domain_components = domain_url.split('.')
-
-    for c_comp, d_comp in zip(check_components, domain_components):
-
-        if c_comp in common:
-            check_components.remove(c_comp)
-
-        if d_comp in common:
-            domain_components.remove(d_comp)
-
-    for comp in check_components:
-        if comp in domain_components:
-            return True
-
-    return False
-
-
 def create_logger():
     lg = logging.getLogger(__name__)
     lg.setLevel(logging.DEBUG)
-
     # fhandler = logging.FileHandler(filename='gp_wdl.log', encoding='utf-8', mode='a')
     shandler = logging.StreamHandler()
     # fhandler.setLevel(logging.DEBUG)
     shandler.setLevel(logging.INFO)
-
     fmt = logging.Formatter('[%(asctime)s]:%(pid)s: %(message)s', datefmt='%H:%M:%S')
     # fhandler.setFormatter(fmt)
     shandler.setFormatter(fmt)
-
     # lg.addHandler(fhandler)
     lg.addHandler(shandler)
-
     return lg
 
 
@@ -117,20 +92,17 @@ class ComicSpider(object):
 
     def _parse(self, link):
         result = None
-
         if '#' in link:
             return None
         elif link.startswith('/') or not link.startswith('http'):
             result = parse.urljoin(self.__cururl, link)
         elif link.startswith('http'):
             result = link
-
         return result
 
     def _trash(self, url, size, filename):
         if url not in self.__trash:
             self.__trash[url] = {'size': size, 'filename': filename}
-
             with open('dumpster.txt', 'a') as d:
                 d.write('{}, {}\n'.format(url, size))
 
@@ -185,11 +157,10 @@ class ComicSpider(object):
     def _process_img(self, img):
         # TODO refactor into something more concise
         target = None
+
         if img['src'] is None:
             return
-
         img_src = img['src']
-
         url = self._parse(img_src)
 
         if url in self.__trash:
@@ -198,7 +169,6 @@ class ComicSpider(object):
         img_fetch = requests.get(url, stream=True)
 
         filename = get_file_name_from_request(img_fetch)
-
         if filename in self._comic_dir_content:
             self._trash(url, content_length(img_fetch), filename)
             return
@@ -214,6 +184,7 @@ class ComicSpider(object):
             target = img_fetch
 
         self._add_size(content_length(target))
+
         try:
             self._save_img(target)
             logger.debug('{} saved!'.format(img_src), extra={'pid': os.getpid()})
@@ -234,7 +205,6 @@ class ComicSpider(object):
 
     def _work(self, task):
         setrecursionlimit(2**12)
-
         self.__curdomain = task[1]
         self.__queue.append(task[0])
 
@@ -246,7 +216,6 @@ class ComicSpider(object):
                 raise
 
         logger.addHandler(logging.FileHandler(filename='logs/{}.log'.format(self._comic_name), encoding='utf-8'))
-
         logger.info('Worker starting, recursion limit: {}'.format(getrecursionlimit()), extra={'pid': os.getpid()})
 
         while len(self.__queue) > 0:
