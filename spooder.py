@@ -1,3 +1,10 @@
+import threading
+import requests
+import os
+import errno
+import logging
+import re
+
 from urllib import parse
 from bs4 import BeautifulSoup
 from time import sleep
@@ -5,12 +12,6 @@ from multiprocessing import Pool
 from pathlib import Path
 from sys import setrecursionlimit, getrecursionlimit
 from requests.exceptions import ConnectionError
-import threading
-import requests
-import os
-import errno
-import logging
-import re
 
 
 def get_file_name_from_request(req):
@@ -34,7 +35,7 @@ def content_length(req):
 
 
 def domain_safeguard(check_url, domain_url):
-    # TODO test this for edge cases, may be too broad of a check
+    # TODO test this for edge cases before using, may be too broad of a check
     common = ['com', 'org', 'net']
     check_components = check_url.split('.')
     domain_components = domain_url.split('.')
@@ -50,6 +51,7 @@ def domain_safeguard(check_url, domain_url):
     for comp in check_components:
         if comp in domain_components:
             return True
+
     return False
 
 
@@ -157,6 +159,7 @@ class ComicSpider(object):
             try:
                 refresh_url = meta['content'].split('=')[1]
                 if refresh_url:
+                    self.__curdomain = parse.urlparse(refresh_url).netloc
                     return self._collect(refresh_url)
             except KeyError:
                 pass
