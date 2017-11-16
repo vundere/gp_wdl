@@ -29,8 +29,6 @@ def dedupe(sourcefile):
         newlines = []
         src.seek(0)
         src.truncate()
-        for line in lines:
-            if line not in newlines:
-                newlines.append(line)
+        newlines = [line for line in lines if line not in newlines]
         for line in newlines:
             src.write(line)
