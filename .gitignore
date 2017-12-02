@@ -1,4 +1,5 @@
 .idea
+comics/
 *.txt
 *pycache*
 .log

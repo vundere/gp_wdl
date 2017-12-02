@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 from time import sleep
 from multiprocessing import Pool
 from pathlib import Path
-from sys import setrecursionlimit, getrecursionlimit
 from requests.exceptions import ConnectionError
 
 
@@ -20,7 +19,7 @@ def get_file_name_from_request(req):
         parsed_url = parse.urlsplit(url)
         return os.path.basename(parsed_url.path)
     except AttributeError as e:
-        logger.info(e,  extra={'pid': os.getpid()})
+        logger.info(e)
         return None
 
 
@@ -59,7 +58,7 @@ def create_logger():
     shandler = logging.StreamHandler()
     # fhandler.setLevel(logging.DEBUG)
     shandler.setLevel(logging.INFO)
-    fmt = logging.Formatter('[%(asctime)s]:%(pid)s: %(message)s', datefmt='%H:%M:%S')
+    fmt = logging.Formatter('[%(asctime)s]: %(message)s', datefmt='%H:%M:%S')
     # fhandler.setFormatter(fmt)
     shandler.setFormatter(fmt)
     # lg.addHandler(fhandler)
@@ -96,7 +95,7 @@ class ComicSpider(object):
         if not url:
             return
         elif (url not in self.__visited) and (url not in self.__queue) and (self.__curdomain in url):
-            logger.debug('Adding {} to queue.'.format(url), extra={'pid': os.getpid()})
+            logger.debug('Adding {} to queue.'.format(url))
             self.__queue.append(url)
 
     def _add_size(self, size):
@@ -140,19 +139,22 @@ class ComicSpider(object):
                 except Exception as e:
                     logger.info(e)
         if len(os.listdir(self._comic_dir)) == 0:
-            os.remove(self._comic_dir)
+            try:
+                os.remove(self._comic_dir)
+            except:
+                pass
 
     def _collect(self, url):
         self.__cururl = url
         self.__visited.append(url)
-        logger.info('Visiting {}'.format(url), extra={'pid': os.getpid()})
+        logger.info('Visiting {}'.format(url))
 
         try:
             r = requests.get(url)
             if r.status_code != 200:
                 raise ConnectionError
         except ConnectionError:
-            logger.debug('Could not connect to {}, stopping.'.format(url), extra={'pid': os.getpid()})
+            logger.debug('Could not connect to {}, stopping.'.format(url))
             return
 
         soup = BeautifulSoup(r.content, 'lxml')
@@ -184,14 +186,18 @@ class ComicSpider(object):
         if url in self.__trash:
             return
 
+        logger.debug('Processing {}'.format(url))
+
         img_fetch = requests.get(url, stream=True)
 
         filename = get_file_name_from_request(img_fetch)
         if filename in self._comic_dir_content:
             self._trash(url, content_length(img_fetch), filename)
+            logger.debug('Trashing {}...'.format(url))
             return
 
         if img_fetch.status_code != 200:
+            logger.debug('Connection failed for {}...'.format(url))
             return
 
         if not target:
@@ -205,9 +211,9 @@ class ComicSpider(object):
 
         try:
             self._save_img(target)
-            logger.debug('{} saved!'.format(img_src), extra={'pid': os.getpid()})
+            logger.debug('{} saved!'.format(img_src))
         except PermissionError:
-            logger.debug('ERROR!\n\tPermissionError saving {}'.format(img_src), extra={'pid': os.getpid()})
+            logger.debug('ERROR!\n\tPermissionError saving {}'.format(img_src))
 
     def _save_img(self, target_conn):
         if target_conn:
@@ -216,13 +222,12 @@ class ComicSpider(object):
                 with open(fname, 'wb') as f:
                     f.write(target_conn.content)
 
-                logger.info('{} saved!'.format(fname), extra={'pid': os.getpid()})
+                logger.info('{} saved!'.format(fname))
             else:
-                logger.info('{} already exists.'.format(fname), extra={'pid': os.getpid()})
+                logger.info('{} already exists.'.format(fname))
             target_conn.close()
 
     def _work(self, tasks):
-        setrecursionlimit(2**12)
         for task in tasks:
             self.__avg_stored = {'count': 0, 'avg': 0}  # Reset to account for file size difference between comics
             self.__curdomain = task[1]
@@ -235,8 +240,10 @@ class ComicSpider(object):
                 if e.errno != errno.EEXIST:
                     raise
 
+            for hdlr in logger.handlers[:]:  # remove all old handlers
+                if not isinstance(hdlr, logging.StreamHandler):
+                    logger.removeHandler(hdlr)
             logger.addHandler(logging.FileHandler(filename='logs/{}.log'.format(self._comic_name), encoding='utf-8'))
-            logger.info('Worker starting, recursion limit: {}'.format(getrecursionlimit()), extra={'pid': os.getpid()})
 
             while len(self.__queue) > 0:
                 self._collect(self.__queue.pop(0))
@@ -247,16 +254,15 @@ class ComicSpider(object):
             if len(os.listdir(self._comic_dir)) < len(self.__visited)/10:
                 # An easy way of knowing which comics might have uncaught issues
                 with open('concerns.txt', 'a') as f:
-                    f.write('Low download amount for comic {}'.format(self._comic_name))
+                    f.write('{}\n'.format(task))
 
-            logger.info('Task finished #########################', extra={'pid': os.getpid()})
-        logger.info('Worker finished #########################', extra={'pid': os.getpid()})
+            logger.info('{} finished #########################'.format(self.__curdomain))
+        logger.info('Worker finished #########################')
 
     def run(self):
         # targets = [self.__domains[x:x+4] for x in range(0, len(self.__domains), 4)]
         targets = split(self.__domains, 4)
         # targets = [[self.__domains[0]]]  # Uncomment for single-site testing
         with Pool(processes=4) as p:
-            for subset in targets:
-                apply = [p.apply_async(self._work, (d,)) for d in subset]
-                res = [w.get() for w in apply]
+            apply = [p.apply_async(self._work, (subset,)) for subset in targets]
+            res = [w.get() for w in apply]
