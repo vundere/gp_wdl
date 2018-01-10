@@ -16,3 +16,5 @@ Known weaknesses:
   - Generated webpages
   - Dynamic content (pretty much same as above)
   - Unorthodox domain use / URLs
+  
+Credit for a lot of the image request stuff goes to the boxiest of foxes and his solution to my first(and awful) attempt at a comic downloader.
