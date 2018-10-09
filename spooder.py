@@ -13,6 +13,9 @@ from pathlib import Path
 from requests.exceptions import ConnectionError
 
 
+DEBUG = True
+
+
 def get_file_name_from_request(req):
     try:
         url = req.url
@@ -129,19 +132,21 @@ class ComicSpider(object):
             if item['size'] < (self.__avg_stored['size']/3):
                 filename = item['filename']
                 try:
-                    # Moves files instead of deleting them, to allow for manual inspection and deletion.
-                    # os.remove('{}/{}/{}'.format('comics', self.__curdomain.split('.')[0], filename))
-                    # logger.info('Removed {}'.format(filename), extra={'pid': os.getpid()})
-                    os.rename(
-                        '{}/{}'.format(self._comic_dir, filename),
-                        '{}/{}/{}'.format(self._comic_dir, 'trash', filename)
-                    )
+                    if DEBUG:
+                        os.rename(
+                            '{}/{}'.format(self._comic_dir, filename),
+                            '{}/{}/{}'.format(self._comic_dir, 'trash', filename)
+                        )
+                    else:
+                        os.remove('{}/{}/{}'.format('comics', self.__curdomain.split('.')[0], filename))
+                        logger.info('Removed {}'.format(filename), extra={'pid': os.getpid()})
+
                 except Exception as e:
                     logger.info(e)
         if len(os.listdir(self._comic_dir)) == 0:
             try:
-                os.remove(self._comic_dir)
-            except:
+                os.rmdir(self._comic_dir)
+            except OSError:
                 pass
 
     def _collect(self, url):
